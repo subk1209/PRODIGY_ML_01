@@ -1,0 +1,419 @@
+---
+title: "House Price Prediction"
+author: "Subhajit Karmakar"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F,
+                      message = F)
+```
+
+<style type="text/css">
+    .main-container 
+    {
+        max-width: 80%;
+    }
+    body
+    {
+        font-family: Times New Roman;
+        font-size: 12pt;
+    }
+    .graph img 
+    {
+        max-width: 100%;
+    }
+</style>
+
+
+The data given to us contains information on price and different relevant features of houses of a particular region. Our task is to predict the price of houses using the **square fooatage**, **number of bedrooms** and **number of bathrooms**, i.e. not all of the features are required. 
+
+**Data source:** <https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data?select=train.csv>
+
+> <font size = '5'> **Necessary libraries & data importation** </font>
+
+```{r}
+library(tidyverse)
+library(ggcorrplot)
+library(gridExtra)
+library(ggpubr)
+library(scales)
+library(car)
+library(jtools)
+
+
+df <- read_csv('D:/Internships/Prodigy/Task 1 (Price Prediction)/Data1.csv',
+               show_col_types = F)
+```
+
+> <font size = '5'> **Glimpse at the data** </font>
+
+```{r}
+glimpse(df)
+```
+
+**Comment:** There are $\small 1460$ rows and $\small 81$ columns in the data.
+
+Now, we only need the variables which fall under the category **Square footage**, **Count of bedrooms**, **Count of bathrooms**. For this, we need to search the variables first.
+
+Points need to be kept in mind:
+
+* `GrLiveArea` is the sum of `1stFlrSf` and `2ndFlrSf`, so we are ignoring it.
+* The names of the variables `1stFlrSf` and `2ndFlrSf` are starting with integers, this should be changed.
+* The count of bedrooms and bathrooms are integer type variables, so we need to change the format to factor from numeric in the dataframe.
+
+```{r}
+df <- df %>% rename('FirstFlrSf' = '1stFlrSF',
+              'SecondFlrSF' = '2ndFlrSF') %>% 
+  select(FirstFlrSf, SecondFlrSF,
+                    TotalBsmtSF, LotArea, BedroomAbvGr,
+                    BsmtFullBath, BsmtHalfBath,
+                    FullBath, HalfBath, SalePrice)%>% 
+  mutate(across(c(BedroomAbvGr,BsmtFullBath,
+                       BsmtHalfBath, FullBath,
+                       HalfBath), as.factor))
+```
+
+
+<font size = '4'> **Checking for missing value** </font>
+
+```{r}
+df %>% is.na() %>% sum()
+```
+$\small \therefore$ There is no missing value in the data.
+
+***
+***
+
+> <font size = '5'> **Distribution of Predictors** </font>
+
+Plots to be used:
+
+* **Integer Type:** Count-Plot 
+* **Continuous/Numerical:** Histogram and Box-Plot
+
+```{r, echo=FALSE}
+uni_cont <- function(var){
+  df %>% ggplot(aes({{var}})) +
+    geom_histogram(aes(y = after_stat(density)),
+                   colour = 'red', fill = 'pink') +
+    geom_density(colour = 'darkgreen', lty = 2, lwd = 1) +
+    theme_minimal() + 
+    labs(x = '', y = 'Frequency density\n') -> p1
+  
+  df %>% ggplot(aes({{var}})) +
+    geom_boxplot(fill = 'skyblue', outlier.colour = 'red',
+                 outlier.shape = 4,
+                 outlier.stroke = 1) + theme_minimal() +
+    labs(x = '') -> p2
+  
+  gridExtra::grid.arrange(p1,p2, ncol = 2)
+}
+```
+
+<font size = '4'> **Distribution of FirstFlrSf** </font>
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+uni_cont(FirstFlrSf)
+```
+
+
+<font size = '4'> **Distribution of SecondFlrSF** </font>
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+uni_cont(SecondFlrSF)
+```
+
+**Comment:** A lot of zeroes are there in the variable. The size of second floor (sq. feet) can not be zero, so we will treat those values as missing values in our data. 
+
+Let us first see the proportion of 0's in the variable.
+```{r}
+percent((df %>% filter(SecondFlrSF == 0) %>% 
+    nrow())/nrow(df))
+```
+$\small 57\%$ values are missing. We need to replace these missing values, for this we use regression technique. 
+
+**Method:** The part of the data in which `SecondFlrSF` is non-zero, will be used for fitting a multiple linear regression model, by using the other continuous features. Using this regression model, we will predict the missing values. Since large number of values are absent, we are not considering the mean imputation technique or the similar methods.
+
+
+Consider the following code for missing value imputation:
+```{r}
+# replacing 0s by NA:
+df$SecondFlrSF[df$SecondFlrSF == 0] <- NA
+
+# storing the non-zero part of the data:
+df_nonmiss <- df %>% filter(SecondFlrSF != 0)
+
+# fitting the model:
+model <- lm(SecondFlrSF ~ FirstFlrSf + TotalBsmtSF +
+              LotArea + SalePrice, data = df_nonmiss)
+
+# filling up the missing values:
+df %>% 
+  rowwise() %>% 
+  mutate(SecondFlrSF = ifelse(is.na(SecondFlrSF), 
+                              predict(model, newdata = across()), 
+                              SecondFlrSF)) %>% 
+  ungroup() -> df
+```
+
+Let us now look at the distribution of `SecondFlrSF`.
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+uni_cont(SecondFlrSF)
+```
+
+
+<font size = '4'> **Distribution of TotalBsmtSF** </font>
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+uni_cont(TotalBsmtSF)
+```
+
+<font size = '4'> **Distribution of LotArea** </font>
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+uni_cont(LotArea)
+```
+
+
+
+```{r, echo=FALSE}
+uni_cat <- function(var){
+  df %>% count({{var}}) %>% 
+    mutate(prop = percent(n/sum(n))) %>% 
+    ggplot(aes(x = {{var}}, y = n)) +
+    geom_col(fill = 'steelblue', colour = 'darkblue', width = 0.3) +
+    theme_minimal() + labs(x = '', y = 'Frequency\n') +
+    geom_text(aes(label = prop), vjust = -0.5)
+}
+```
+
+
+<font size = '4'> **Distribution of BedroomAbvGr** </font>
+
+```{r, echo=FALSE, fig.height=4}
+uni_cat(BedroomAbvGr)
+```
+
+**Comment:** Lot of levels are there and some of them are present in a very small proportion. We may merge the levels here which will reduce the complexity of the regression model which we will fit later.
+
+Code to do the merging:
+```{r}
+df %>% mutate(BedroomAbvGr = 
+                case_when(BedroomAbvGr %in% 0:2 ~ '<=2',
+                          BedroomAbvGr == 3 ~ '3',
+                          BedroomAbvGr %in% 4:8 ~ '>3')) -> df
+```
+
+
+<font size = '4'> **Distribution of BsmtFullBath** </font>
+
+```{r, echo=FALSE, fig.height=4}
+uni_cat(BsmtFullBath)
+```
+
+**Comment:** Similarly the proportion of houses having 2 or 3 full bathrooms is very low, so we will merge the levels.
+
+Code to do the merging:
+```{r}
+df %>% mutate(BsmtFullBath = 
+                case_when(BsmtFullBath == 0 ~ 'No',
+                          BsmtFullBath %in% 1:3 ~ 'Yes')) -> df
+```
+
+
+<font size = '4'> **Distribution of BsmtHalfBath** </font>
+
+```{r, echo=FALSE, fig.height=4}
+uni_cat(BsmtHalfBath)
+```
+
+Code to do the merging:
+```{r}
+df %>% mutate(BsmtHalfBath = 
+                case_when(BsmtHalfBath == 0 ~ 'No',
+                          BsmtHalfBath %in% 1:2 ~ 'Yes')) -> df
+```
+
+
+<font size = '4'> **Distribution of FullBath** </font>
+
+```{r, echo=FALSE, fig.height=4}
+uni_cat(FullBath)
+```
+
+Code to do the merging:
+```{r}
+df %>% mutate(FullBath = 
+                case_when(FullBath %in% 0:1 ~ '<=1',
+                          FullBath %in% 2:3 ~ '>1')) -> df
+```
+
+
+<font size = '4'> **Distribution of HalfBath** </font>
+
+```{r, echo=FALSE, fig.height=4}
+uni_cat(HalfBath)
+```
+
+Code to do the merging:
+```{r}
+df %>% mutate(HalfBath = 
+                case_when(HalfBath == 0 ~ '<1',
+                          HalfBath %in% 1:2 ~ '>=1')) -> df
+```
+
+> <font size = '5'> **Correlation plot** </font>
+
+Now, let us look at the correlation structure of the continuous variables through correlation plot.
+
+**Objective:** To check for the presence of multicollinearity.
+
+```{r, fig.height=4, fig.width=4}
+df %>% select(where(is.numeric)) %>% 
+  cor() %>% ggcorrplot(lab = T, type = 'upper')
+```
+
+**Comment:** 
+
+* We can see that the correlations between the feature and response variables are moderate. In particular, the correlation between `SecondFlrSF` and `SalePrice` is very high. 
+
+* Correlation between `FirstFlrSf` and `TotalBsmtSF` is very high - indication of multicollieanrity.
+
+To check for the presence of multicollinearity, we now consider the VIF technique. The list VIF values are listed below:
+
+```{r}
+lm(SalePrice ~ ., data = df) %>% vif()
+```
+**Comment:** From the values of VIFs above, we can easily say that there is no multicollinearity presence in the data since all the values are significantly less than 5.
+
+
+> <font size = '5'> **Relationship of Predictors with Response** </font>
+
+Plots to be used:
+
+* Response ~ Continuous Predictor: Scatter-Plot
+* Response ~ Integer type Predictor: Box-Plot
+
+
+<font size = '4'> **Predictor: Continuous** </font>
+
+```{r, fig.width=8}
+cont_cont <- function(var, var_text){
+  df %>% ggplot(aes(x = {{var}}, y = SalePrice)) +
+    geom_point(size = 1, colour = 'red') + theme_bw() +
+    labs(x = '', y = '', title = paste0('Predictor ~ ', var_text)) +
+    theme(plot.title = element_text(face = 'bold', hjust = 0.5))
+}
+
+cont_cont(FirstFlrSf, 'FirstFlrSf') -> p1
+cont_cont(SecondFlrSF, 'SecondFlrSF') -> p2
+cont_cont(TotalBsmtSF, 'TotalBsmtSF') -> p3
+cont_cont(LotArea, 'LotArea') -> p4
+
+grid.arrange(p1,p2,p3,p4, ncol = 2, nrow = 2)
+```
+
+<font size = '4'> **Predictor: Discrete** </font>
+
+```{r, fig.width=10}
+cont_cat <- function(var, var_text){
+  df %>% ggplot(aes(x = {{var}}, y = SalePrice)) +
+    geom_boxplot(fill = 'lightblue', outlier.colour = 'red',
+                 outlier.stroke = 1, outlier.shape = 4) +
+    theme_minimal() +
+    labs(x = '', y = '', title = paste0('Response ~ ', var_text)) + 
+    theme(plot.title = element_text(face = 'bold',
+                                    hjust = 0.5))
+}
+
+cont_cat(BedroomAbvGr, 'BedroomAbvGr') -> p1
+cont_cat(BsmtFullBath, 'BsmtFullBath') -> p2
+cont_cat(BsmtHalfBath, 'BsmtHalfBath') -> p3
+cont_cat(FullBath, 'FullBath') -> p4
+cont_cat(HalfBath, 'HalfBath') -> p5
+
+
+ggarrange(p3,p4,p5, ncol = 3) %>% 
+  ggarrange(ggarrange(p1,p2), ., nrow = 2)
+```
+
+
+> <font size = '5'> **Distribution of Response variable** </font>
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+uni_cont(SalePrice)
+```
+**Comment:** We see that the distribution is slightly positively skewed, to make it approximately normal, we can consider the log transformation.
+
+Let us see the distribution of the transformed response variable (log of original).
+
+```{r, echo=FALSE, fig.width=10, fig.height=4}
+uni_cont(log(SalePrice))
+```
+
+**Comment:** So, we can now conclude that the transformed response is almost normally distributed. To satisfy the normality assumption of regression model, we will use this transformed variable. 
+
+Now, our final task is to fit a regression model to predict the price of the houses based on the above mentioned features. We are not doing the train-test splitting here, simply fitting a multiple regression model. 
+
+
+> <font size = '5'> **Fitting of Linear Regression Model** </font>
+
+Here, we are regressing `log(SalePrice)` on the feature variables. The summary table of the regression is given below:
+
+```{r, echo=FALSE}
+l <- lm(log(SalePrice) ~ ., data = df)
+summ(l)
+```
+
+**Comment:** From the above table, we can see that $\small R^2 = 0.76 \ \&\ \text{adj-}R^2 = 0.76\ \implies$ all variables are relevant or we cay say that no variable is redundant. Also, high value of $\small R^2$ implies that the fit is good. From the p-values also, we can conclude that all the variables are statistically significant.
+
+
+> <font size = '5'> **Regression diagnostic** </font>
+
+Now, let us check the residual versus fit plot to detect whether there is any problem is our model i.e. all the assumptions are more or less satisfied or not.
+
+<font size = '4'> **Residual vs Fit plot** </font>
+
+```{r}
+ggplot(NULL, aes(x = l$fitted.values, y = l$residuals)) +
+  geom_point(size = 1, colour = 'red') + 
+  geom_hline(yintercept = 0, lty = 2, lwd = 1, colour = 'blue') +
+  labs(x = '\nFitted values', y = 'Residuals\n') +
+  theme_minimal()
+```
+
+**Comment:** The residual is almost randomly scattered above and below 0 line. No heteroscedasticity is there also. But two potential outliers are present there. 
+As a remedy, we can delete those two outliers and refit the model.
+
+
+<font size = '4'> **Re-fitting the model (after deletion of outliers)** </font>
+
+```{r}
+df %>% mutate('resid' = l$residuals) %>% 
+  filter(resid > -1.1) -> df
+
+# Re-fitting the model:
+l2 <- lm(log(SalePrice) ~ .-resid, data = df)
+summ(l2)
+```
+
+**Note:** The value of $\small R^2$ has improved, now let us see the residual plot again.
+
+```{r, echo=FALSE}
+ggplot(NULL, aes(x = l2$fitted.values, y = l2$residuals)) +
+  geom_point(size = 1, colour = 'red') + 
+  geom_hline(yintercept = 0, lty = 2, lwd = 1, colour = 'blue') +
+  labs(x = '\nFitted values', y = 'Residuals\n') +
+  theme_minimal()
+```
+
+**Comment:** Now, the residual vs fit plot looks almost fine. We can see that some sort of heteroscedasticity is there but that can be ignored.
+
+<font size = '6'> **Thank You!** </font>
+
+
+
+
+
